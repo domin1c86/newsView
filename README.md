@@ -17,11 +17,10 @@ docker compose up --build -d backend frontend
 
 ## 配置
 
-项目根目录的 `.env` 是 Docker Compose 实际读取的本机配置；`.env.example` 是模板，方便以后复制或对照。两者都被 `.gitignore` 忽略，避免误提交本机 key。
+项目根目录的 `.env` 是 Docker Compose 实际读取的本机配置；`.env.example` 是模板，方便以后复制或对照。两者都被 `.gitignore` 已被忽略。
 
 - `BACKEND_HOST_PORT=18000`：后端映射到宿主机的端口，容器内部仍是 `8000`。
 - `FRONTEND_HOST_PORT=5173`：前端映射到宿主机的端口。
-- `SPECIAL_LINK_URL=https://bing.com`：搜索词包含 `老岳中转` 时展示的跳转链接；前端通过 `/api/config` 读取，不再写死。
 - `SITE_ICP_NUMBER`、`SITE_COPYRIGHT_OWNER`、`SITE_COPYRIGHT_TEXT`：页面底栏展示的备案号、版权归属和版权文案；空值不会显示。
 - `MANUAL_REFRESH_HOURLY_LIMIT=10`：顶栏手动刷新按钮的服务器端每小时上限；自动定时刷新不计入。
 - `NEWS_API_PROVIDER=hackernews`：兼容旧配置字段。
@@ -62,8 +61,6 @@ docker compose up --build -d backend frontend
 - `GET /api/refresh/status`：返回当前小时手动刷新已用次数、上限、剩余次数和窗口结束时间。
 - `POST /api/refresh`：手动刷新；超过小时上限时返回 `429`，`detail.code` 为 `manual_refresh_hourly_limit_exceeded`。
 - `POST /api/translate`：按缓存和供应商额度返回译文；所有供应商不可用或超过 90% 预算时返回 `429`，`detail.code` 为 `translation_quota_exhausted`。
-
-搜索词包含 `老岳中转` 时，`/api/search` 会返回 `SPECIAL_LINK_URL` 配置的链接；前端也会在输入框下方即时展示该链接。
 
 前端语言切换有三种模式：
 
