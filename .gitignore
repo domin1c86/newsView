@@ -1,0 +1,18 @@
+# Cache files
+**/__pycache__/
+**/.pytest_cache/
+
+# Agent files
+.agents/
+
+# Env files
+backend/.venv/
+backend/.deps/
+backend/data/
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/tsconfig.tsbuildinfo
+.env
+.env.example
+api.json
