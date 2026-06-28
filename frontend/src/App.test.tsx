@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 
@@ -116,6 +116,17 @@ describe('App', () => {
     expect(screen.getByText('OpenAI 发布新的多模态模型能力')).toBeInTheDocument();
   });
 
+  it('prunes saved news ids that are no longer in the one-week news cache', async () => {
+    window.localStorage.setItem('ai-news-saved', JSON.stringify(['cluster-1', 'expired-cluster']));
+    stubDefaultFetch();
+
+    render(<App />);
+    expect(await screen.findByText('OpenAI 发布新的多模态模型能力')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem('ai-news-saved') ?? '[]')).toEqual(['cluster-1']);
+    });
+  });
+
   it('opens the language dialog and translates displayed news titles', async () => {
     stubDefaultFetch((url) => {
       if (url.includes('/api/translate')) {
@@ -157,8 +168,7 @@ describe('App', () => {
   });
 
   it('shows and dismisses the quota exhausted dialog when translation quota is depleted', async () => {
-    vi.useFakeTimers();
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const user = userEvent.setup();
     stubDefaultFetch((url) => {
       if (url.includes('/api/translate')) {
         return {
@@ -187,11 +197,8 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: /切换语言/i }));
     await user.click(screen.getByRole('button', { name: /English/i }));
     expect(await screen.findByRole('alertdialog')).toHaveTextContent('额度已耗尽，请使用浏览器自带翻译');
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
-  });
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument(), { timeout: 3500 });
+  }, 8000);
 
   it('shows manual refresh limit feedback from the server', async () => {
     stubDefaultFetch((url) => {

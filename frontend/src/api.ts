@@ -54,7 +54,7 @@ export function fetchPublicConfig(): Promise<PublicConfig> {
 }
 
 export function fetchNews(): Promise<NewsListResponse> {
-  return request<NewsListResponse>('/api/news?page=1&page_size=40');
+  return request<NewsListResponse>('/api/news?page=1&page_size=100');
 }
 
 export function searchNews(query: string): Promise<SearchResponse> {

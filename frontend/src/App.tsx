@@ -521,6 +521,12 @@ export function App() {
   }, [savedIds]);
 
   useEffect(() => {
+    if (!lastUpdatedAt || query.trim() || status === 'loading') return;
+    const currentItemIds = new Set(items.map((item) => item.id));
+    setSavedIds((current) => current.filter((id) => currentItemIds.has(id)));
+  }, [items, lastUpdatedAt, query, status]);
+
+  useEffect(() => {
     window.localStorage.setItem('ai-news-followed-topics', JSON.stringify(followedTopics));
   }, [followedTopics]);
 
