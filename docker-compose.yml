@@ -1,0 +1,81 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_PATH: /data/news.db
+      CORS_ORIGINS: http://localhost:${FRONTEND_HOST_PORT:-5173},http://127.0.0.1:${FRONTEND_HOST_PORT:-5173}
+      TZ: ${NEWS_REFRESH_TIMEZONE:-Asia/Shanghai}
+      SPECIAL_LINK_URL: ${SPECIAL_LINK_URL:-https://bing.com}
+      SITE_ICP_NUMBER: ${SITE_ICP_NUMBER:-}
+      SITE_COPYRIGHT_OWNER: ${SITE_COPYRIGHT_OWNER:-}
+      SITE_COPYRIGHT_TEXT: ${SITE_COPYRIGHT_TEXT:-}
+      MANUAL_REFRESH_HOURLY_LIMIT: ${MANUAL_REFRESH_HOURLY_LIMIT:-10}
+      NEWS_API_PROVIDER: ${NEWS_API_PROVIDER:-hackernews}
+      NEWS_API_PROVIDERS: ${NEWS_API_PROVIDERS:-hackernews}
+      GNEWS_API_KEY: ${GNEWS_API_KEY:-}
+      GNEWS_ENDPOINT: ${GNEWS_ENDPOINT:-https://gnews.io/api/v4/search}
+      THENEWSAPI_API_KEY: ${THENEWSAPI_API_KEY:-}
+      THENEWSAPI_ENDPOINT: ${THENEWSAPI_ENDPOINT:-https://api.thenewsapi.com/v1/news/all}
+      CURRENTS_API_KEY: ${CURRENTS_API_KEY:-}
+      CURRENTS_ENDPOINT: ${CURRENTS_ENDPOINT:-https://api.currentsapi.services/v1/search}
+      NEWSAPI_API_KEY: ${NEWSAPI_API_KEY:-}
+      NEWSAPI_ENDPOINT: ${NEWSAPI_ENDPOINT:-https://newsapi.org/v2/everything}
+      GUARDIAN_API_KEY: ${GUARDIAN_API_KEY:-}
+      GUARDIAN_ENDPOINT: ${GUARDIAN_ENDPOINT:-https://content.guardianapis.com/search}
+      HN_ALGOLIA_ENDPOINT: ${HN_ALGOLIA_ENDPOINT:-https://hn.algolia.com/api/v1/search_by_date}
+      TRANSLATION_PROVIDERS: ${TRANSLATION_PROVIDERS:-mymemory,tencent,aliyun,volcengine,azure}
+      TRANSLATION_STOP_AT_RATIO: ${TRANSLATION_STOP_AT_RATIO:-0.9}
+      TRANSLATION_BILLING_TIMEZONE: ${TRANSLATION_BILLING_TIMEZONE:-Asia/Shanghai}
+      MYMEMORY_ENDPOINT: ${MYMEMORY_ENDPOINT:-https://api.mymemory.translated.net/get}
+      MYMEMORY_EMAIL: ${MYMEMORY_EMAIL:-}
+      MYMEMORY_DAILY_CHAR_BUDGET: ${MYMEMORY_DAILY_CHAR_BUDGET:-}
+      MYMEMORY_DAYLY_CHAR_BUDGET: ${MYMEMORY_DAYLY_CHAR_BUDGET:-50000}
+      MYMEMORY_REQUESTS_PER_SECOND: ${MYMEMORY_REQUESTS_PER_SECOND:-1}
+      TENCENT_TRANSLATE_SECRET_ID: ${TENCENT_TRANSLATE_SECRET_ID:-}
+      TENCENT_TRANSLATE_SECRET_KEY: ${TENCENT_TRANSLATE_SECRET_KEY:-}
+      TENCENT_TRANSLATE_REGION: ${TENCENT_TRANSLATE_REGION:-ap-guangzhou}
+      TENCENT_TRANSLATE_ENDPOINT: ${TENCENT_TRANSLATE_ENDPOINT:-https://tmt.tencentcloudapi.com}
+      TENCENT_TRANSLATE_PROJECT_ID: ${TENCENT_TRANSLATE_PROJECT_ID:-0}
+      TENCENT_TRANSLATE_MONTHLY_CHAR_BUDGET: ${TENCENT_TRANSLATE_MONTHLY_CHAR_BUDGET:-}
+      TENCENT_TRANSLATE_REQUESTS_PER_SECOND: ${TENCENT_TRANSLATE_REQUESTS_PER_SECOND:-5}
+      ALIYUN_TRANSLATE_ACCESS_KEY_ID: ${ALIYUN_TRANSLATE_ACCESS_KEY_ID:-}
+      ALIYUN_TRANSLATE_ACCESS_KEY_SECRET: ${ALIYUN_TRANSLATE_ACCESS_KEY_SECRET:-}
+      ALIYUN_TRANSLATE_REGION: ${ALIYUN_TRANSLATE_REGION:-cn-hangzhou}
+      ALIYUN_TRANSLATE_ENDPOINT: ${ALIYUN_TRANSLATE_ENDPOINT:-mt.cn-hangzhou.aliyuncs.com}
+      ALIYUN_TRANSLATE_SCENE: ${ALIYUN_TRANSLATE_SCENE:-general}
+      ALIYUN_TRANSLATE_MONTHLY_CHAR_BUDGET: ${ALIYUN_TRANSLATE_MONTHLY_CHAR_BUDGET:-}
+      ALIYUN_TRANSLATE_REQUESTS_PER_SECOND: ${ALIYUN_TRANSLATE_REQUESTS_PER_SECOND:-5}
+      VOLCENGINE_TRANSLATE_ACCESS_KEY_ID: ${VOLCENGINE_TRANSLATE_ACCESS_KEY_ID:-}
+      VOLCENGINE_TRANSLATE_SECRET_ACCESS_KEY: ${VOLCENGINE_TRANSLATE_SECRET_ACCESS_KEY:-}
+      VOLCENGINE_TRANSLATE_REGION: ${VOLCENGINE_TRANSLATE_REGION:-cn-north-1}
+      VOLCENGINE_TRANSLATE_ENDPOINT: ${VOLCENGINE_TRANSLATE_ENDPOINT:-https://open.volcengineapi.com}
+      VOLCENGINE_TRANSLATE_MONTHLY_CHAR_BUDGET: ${VOLCENGINE_TRANSLATE_MONTHLY_CHAR_BUDGET:-}
+      VOLCENGINE_TRANSLATE_REQUESTS_PER_SECOND: ${VOLCENGINE_TRANSLATE_REQUESTS_PER_SECOND:-5}
+      AZURE_TRANSLATOR_KEY: ${AZURE_TRANSLATOR_KEY:-}
+      AZURE_TRANSLATOR_REGION: ${AZURE_TRANSLATOR_REGION:-}
+      AZURE_TRANSLATOR_ENDPOINT: ${AZURE_TRANSLATOR_ENDPOINT:-https://api.cognitive.microsofttranslator.com}
+      AZURE_TRANSLATOR_MONTHLY_CHAR_BUDGET: ${AZURE_TRANSLATOR_MONTHLY_CHAR_BUDGET:-2000000}
+      AZURE_TRANSLATOR_REQUESTS_PER_SECOND: ${AZURE_TRANSLATOR_REQUESTS_PER_SECOND:-5}
+      NEWS_QUERIES: ${NEWS_QUERIES:-AI large language model OR multimodal model,AI applications OR AI agents OR enterprise AI,AI compute GPU Nvidia data center,AI data copyright dataset training data,AI hardware device chip Apple price increase,AI startup funding acquisition investment,AI policy regulation safety governance}
+      RSS_SOURCES: ${RSS_SOURCES:-MIT Technology Review AI|https://www.technologyreview.com/topic/artificial-intelligence/feed/,VentureBeat AI|https://venturebeat.com/category/ai/feed/,The Decoder|https://the-decoder.com/feed/,TechCrunch AI|https://techcrunch.com/category/artificial-intelligence/feed/,OpenAI News|https://openai.com/news/rss.xml,Google AI Blog|https://blog.google/technology/ai/rss/,GitHub AI and ML|https://github.blog/ai-and-ml/feed/,AWS Machine Learning|https://aws.amazon.com/blogs/machine-learning/feed/,Hugging Face Blog|https://huggingface.co/blog/feed.xml,NVIDIA Generative AI|https://nvidianews.nvidia.com/cats/generative_al.xml,NVIDIA Models Libraries Frameworks|https://nvidianews.nvidia.com/cats/models_libraries_frameworks.xml,arXiv cs.AI|https://export.arxiv.org/api/query?search_query=cat:cs.AI&sortBy=submittedDate&sortOrder=descending&max_results=20,arXiv cs.CL|https://export.arxiv.org/api/query?search_query=cat:cs.CL&sortBy=submittedDate&sortOrder=descending&max_results=20,HN AI Newest|https://hnrss.org/newest?q=AI+OR+LLM+OR+OpenAI+OR+Claude+OR+Nvidia&points=20,机器之心|https://www.jiqizhixin.com/rss,量子位|https://www.qbitai.com/feed,InfoQ 中文 AI|https://www.infoq.cn/feed,AI科技评论 RSSHub|https://rsshub.app/leiphone/category/ai,36氪人工智能 RSSHub|https://rsshub.app/36kr/newsflashes,虎嗅科技 RSSHub|https://rsshub.app/huxiu/article,Daily Juya|https://daily.juya.uk/rss.xml}
+      NEWS_REFRESH_TIMES: ${NEWS_REFRESH_TIMES:-07:00,09:00,12:00,18:00,20:00,22:00}
+      NEWS_REFRESH_TIMEZONE: ${NEWS_REFRESH_TIMEZONE:-Asia/Shanghai}
+      NEWS_RETENTION_DAYS: ${NEWS_RETENTION_DAYS:-7}
+    volumes:
+      - news_data:/data
+    ports:
+      - "${BACKEND_HOST_PORT:-18000}:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_BASE_URL: ""
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_HOST_PORT:-5173}:5173"
+
+volumes:
+  news_data:
