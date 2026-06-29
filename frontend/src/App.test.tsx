@@ -64,7 +64,7 @@ function stubDefaultFetch(overrides?: (url: string, init?: RequestInit) => unkno
       if (override) return override;
       if (url.includes('/api/config')) return okJson(publicConfigPayload);
       if (url.includes('/api/refresh/status')) return okJson(refreshStatusPayload);
-      if (url.includes('/api/refresh')) return okJson({});
+      if (url.includes('/api/refresh')) return okJson({ fetched: 0, inserted: 0, clustered: 0, queued: true });
       return okJson(newsPayload);
     })
   );

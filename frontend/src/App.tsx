@@ -436,6 +436,7 @@ export function App() {
   const [status, setStatus] = useState<LoadState>('idle');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [refreshNotice, setRefreshNotice] = useState('');
   const [publicConfig, setPublicConfig] = useState<PublicConfig>(DEFAULT_PUBLIC_CONFIG);
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus | null>(null);
   const [selectedItem, setSelectedItem] = useState<NewsCluster | null>(null);
@@ -507,6 +508,7 @@ export function App() {
           setLastUpdatedAt(new Date().toISOString());
           setStatus('idle');
           setError('');
+          setRefreshNotice('');
         })
         .catch((err: Error) => {
           setError(err.message);
@@ -655,10 +657,11 @@ export function App() {
       setRefreshStatus(currentStatus);
       if (currentStatus.remaining <= 0) {
         setError('刷新次数已达到本小时上限');
+        setRefreshNotice('');
         setStatus('error');
         return;
       }
-      await refreshNews();
+      const refreshResult = await refreshNews();
       const nextRefreshStatus = await fetchRefreshStatus();
       setRefreshStatus(nextRefreshStatus);
       const data = query.trim() ? await searchNews(query.trim()) : await fetchNews();
@@ -666,9 +669,15 @@ export function App() {
       setKeywords(hasSearchKeywords(data) ? data.keywords : []);
       setLastUpdatedAt(new Date().toISOString());
       setError('');
+      setRefreshNotice(
+        refreshResult.queued
+          ? '刷新任务已开始，后台抓取完成后会自动写入缓存；稍后刷新页面即可看到新增内容。'
+          : `刷新完成：新增 ${refreshResult.inserted} 条来源，聚合 ${refreshResult.clustered} 个事件。`,
+      );
       setStatus('idle');
     } catch (err) {
       setError(err instanceof ManualRefreshLimitError ? '刷新次数已达到本小时上限' : err instanceof Error ? err.message : '刷新失败');
+      setRefreshNotice('');
       setStatus('error');
       fetchRefreshStatus()
         .then(setRefreshStatus)
@@ -876,6 +885,7 @@ export function App() {
 
           {status === 'loading' && <div className="state-row">正在加载新闻...</div>}
           {status === 'error' && <div className="state-row error">{error}</div>}
+          {refreshNotice && status !== 'error' && <div className="state-row compact-state">{refreshNotice}</div>}
           {translating && <div className="state-row compact-state">正在翻译为 {languageLabel(languageMode)}...</div>}
           {translationError && <div className="state-row error compact-state">翻译失败，当前显示源语言：{translationError}</div>}
           {status !== 'loading' && activeView !== 'settings' && grouped.length === 0 && <div className="state-row">没有匹配的新闻事件。</div>}

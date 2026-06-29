@@ -43,6 +43,13 @@ export interface RefreshStatus {
   window_ends_at: string;
 }
 
+export interface RefreshResponse {
+  fetched: number;
+  inserted: number;
+  clustered: number;
+  queued: boolean;
+}
+
 export type LanguageMode = 'auto' | 'zh' | 'en';
 
 export interface TranslationItem {

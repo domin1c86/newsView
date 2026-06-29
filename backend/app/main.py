@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
@@ -19,6 +20,21 @@ settings = get_settings()
 database = Database(settings.database_path)
 news_service = NewsService(database, settings)
 translation_service = TranslationService(database, settings)
+logger = logging.getLogger(__name__)
+manual_refresh_tasks: set[asyncio.Task] = set()
+
+
+async def run_manual_refresh() -> None:
+    try:
+        await news_service.refresh()
+    except Exception:
+        logger.exception("Manual background refresh failed")
+
+
+def queue_manual_refresh() -> None:
+    task = asyncio.create_task(run_manual_refresh())
+    manual_refresh_tasks.add(task)
+    task.add_done_callback(manual_refresh_tasks.discard)
 
 
 async def scheduler_loop() -> None:
@@ -64,6 +80,8 @@ async def lifespan(app: FastAPI):
     finally:
         if task:
             task.cancel()
+        for refresh_task in manual_refresh_tasks:
+            refresh_task.cancel()
 
 
 app = FastAPI(title="AI News Aggregator", version="0.1.0", lifespan=lifespan)
@@ -116,7 +134,7 @@ def refresh_status() -> RefreshStatusResponse:
 
 
 @app.post("/api/refresh", response_model=RefreshResponse)
-async def refresh(background_tasks: BackgroundTasks) -> RefreshResponse:
+async def refresh() -> RefreshResponse:
     recorded, _status = news_service.record_manual_refresh()
     if not recorded:
         raise HTTPException(
@@ -126,8 +144,8 @@ async def refresh(background_tasks: BackgroundTasks) -> RefreshResponse:
                 "message": "刷新次数已达到本小时上限",
             },
         )
-    result = await news_service.refresh()
-    return result
+    queue_manual_refresh()
+    return RefreshResponse(fetched=0, inserted=0, clustered=0, queued=True)
 
 
 @app.post("/api/translate", response_model=TranslationResponse)

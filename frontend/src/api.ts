@@ -1,4 +1,4 @@
-import type { LanguageMode, NewsListResponse, PublicConfig, RefreshStatus, SearchResponse, TranslationResponse } from './types';
+import type { LanguageMode, NewsListResponse, PublicConfig, RefreshResponse, RefreshStatus, SearchResponse, TranslationResponse } from './types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -62,8 +62,8 @@ export function searchNews(query: string): Promise<SearchResponse> {
   return request<SearchResponse>(`/api/search?${params.toString()}`);
 }
 
-export function refreshNews(): Promise<void> {
-  return request<void>('/api/refresh', { method: 'POST' });
+export function refreshNews(): Promise<RefreshResponse> {
+  return request<RefreshResponse>('/api/refresh', { method: 'POST' });
 }
 
 export function fetchRefreshStatus(): Promise<RefreshStatus> {

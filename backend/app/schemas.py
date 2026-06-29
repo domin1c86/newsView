@@ -38,6 +38,7 @@ class RefreshResponse(BaseModel):
     fetched: int
     inserted: int
     clustered: int
+    queued: bool = False
 
 
 class PublicConfigResponse(BaseModel):
