@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -15,6 +17,7 @@ class NewsSourceItem(BaseModel):
 class NewsCluster(BaseModel):
     id: str
     title: str
+    title_language: Literal["zh", "en", "unknown"] | None = None
     summary: str
     published_at: str
     keywords: list[str]

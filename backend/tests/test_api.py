@@ -59,6 +59,7 @@ def test_news_and_search_endpoints(monkeypatch):
         assert news_response.status_code == 200
         news_payload = news_response.json()
         assert news_payload["items"]
+        assert "title_language" in news_payload["items"][0]
         assert news_payload["items"][0]["source_count"] >= 1
         assert news_payload["items"][0]["sources"][0]["summary"]
         assert "content" in news_payload["items"][0]["sources"][0]

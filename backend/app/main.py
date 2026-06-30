@@ -72,6 +72,7 @@ def seconds_until_next_refresh(now: datetime, refresh_times: list[str]) -> float
 async def lifespan(app: FastAPI):
     news_service.init()
     news_service.prune_old_news()
+    news_service.schedule_title_language_marking()
     task: asyncio.Task | None = None
     if not settings.disable_scheduler:
         task = asyncio.create_task(scheduler_loop())
@@ -80,6 +81,7 @@ async def lifespan(app: FastAPI):
     finally:
         if task:
             task.cancel()
+        news_service.cancel_language_mark_tasks()
         for refresh_task in manual_refresh_tasks:
             refresh_task.cancel()
 
@@ -151,12 +153,21 @@ async def refresh() -> RefreshResponse:
 @app.post("/api/translate", response_model=TranslationResponse)
 async def translate(payload: TranslationRequest) -> TranslationResponse:
     try:
-        return await translation_service.translate(payload.texts, payload.target_language)
+        async with asyncio.timeout(25):
+            return await translation_service.translate(payload.texts, payload.target_language)
     except TranslationQuotaExhausted as exc:
         raise HTTPException(
             status_code=429,
             detail={
                 "code": "translation_quota_exhausted",
                 "message": "额度已耗尽，请使用浏览器自带翻译",
+            },
+        ) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "translation_timeout",
+                "message": "翻译服务响应超时，请稍后重试",
             },
         ) from exc

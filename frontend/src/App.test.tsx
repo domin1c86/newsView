@@ -8,6 +8,7 @@ const newsPayload = {
     {
       id: 'cluster-1',
       title: 'OpenAI 发布新的多模态模型能力',
+      title_language: 'zh',
       summary: '新模型强化了文本、图像和语音理解能力。',
       published_at: '2026-06-26T10:00:00.000Z',
       keywords: ['openai', '多模态'],
@@ -90,6 +91,29 @@ function mockMatchMedia(matches: boolean) {
   );
 }
 
+function makeNewsItem(index: number, publishedAt: string) {
+  return {
+    id: `cluster-${index}`,
+    title: `中文标题 ${index}`,
+    title_language: null,
+    summary: `中文摘要 ${index}`,
+    published_at: publishedAt,
+    keywords: ['ai'],
+    source_count: 1,
+    primary_url: `https://example.com/${index}`,
+    sources: [
+      {
+        source_name: '测试来源',
+        title: `来源标题 ${index}`,
+        summary: `来源摘要 ${index}`,
+        content: `新闻预览 ${index}`,
+        url: `https://example.com/${index}`,
+        published_at: publishedAt
+      }
+    ]
+  };
+}
+
 describe('App', () => {
   afterEach(() => {
     cleanup();
@@ -117,6 +141,21 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /收起/i })).toHaveAttribute('aria-expanded', 'true');
     await userEvent.click(screen.getByRole('button', { name: /关闭弹窗/i }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('renders news dates and times in Shanghai timezone', async () => {
+    const shanghaiNextDayItem = makeNewsItem(99, '2026-06-25T18:30:00.000Z');
+    stubDefaultFetch((url) => {
+      if (url.includes('/api/news')) {
+        return okJson({ items: [shanghaiNextDayItem], page: 1, page_size: 40, total: 1 });
+      }
+      return undefined;
+    });
+
+    render(<App />);
+    expect(await screen.findByText('中文标题 99')).toBeInTheDocument();
+    expect(screen.getByText('06 - 26, Fri')).toBeInTheDocument();
+    expect(screen.getByText('02:30')).toBeInTheDocument();
   });
 
   it('shows the special link when search includes 老岳中转', async () => {
@@ -208,6 +247,137 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: /切换语言/i }));
     await userEvent.click(screen.getByRole('button', { name: /English/i }));
     expect(await screen.findByText('OpenAI releases new multimodal model capabilities')).toBeInTheDocument();
+  });
+
+  it('translates cards lazily by latest day and scroll threshold', async () => {
+    const items = [
+      ...Array.from({ length: 6 }, (_, index) => makeNewsItem(index + 1, '2026-06-30T10:00:00.000Z')),
+      ...Array.from({ length: 6 }, (_, index) => makeNewsItem(index + 7, '2026-06-29T10:00:00.000Z'))
+    ];
+    const translationBodies: Array<{ texts: string[] }> = [];
+    stubDefaultFetch((url, init) => {
+      if (url.includes('/api/news')) {
+        return okJson({
+          items,
+          page: 1,
+          page_size: 40,
+          total: items.length
+        });
+      }
+      if (url.includes('/api/translate')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { texts: string[]; target_language: string };
+        translationBodies.push({ texts: body.texts });
+        return okJson({
+          target_language: body.target_language,
+          items: body.texts.map((text) => ({
+            original_text: text,
+            translated_text: `${text} EN`,
+            source_language: 'zh-CN',
+            target_language: 'en'
+          }))
+        });
+      }
+      return undefined;
+    });
+
+    render(<App />);
+    expect(await screen.findByText('中文标题 1')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /切换语言/i }));
+    await userEvent.click(screen.getByRole('button', { name: /English/i }));
+
+    await waitFor(() => expect(translationBodies).toHaveLength(3));
+    expect(translationBodies.every((body) => body.texts.length === 6)).toBe(true);
+    expect(translationBodies.flatMap((body) => body.texts)).toEqual(
+      expect.arrayContaining(['中文标题 1', '中文摘要 1', '新闻预览 1', '中文标题 6', '中文摘要 6', '新闻预览 6'])
+    );
+    expect(translationBodies.flatMap((body) => body.texts)).not.toContain('中文标题 7');
+
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-news-card-id]'));
+    cards.forEach((card, index) => {
+      card.getBoundingClientRect = vi.fn(() => ({
+        x: 0,
+        y: index === 3 ? 120 : 1200,
+        width: 320,
+        height: 180,
+        top: index === 3 ? 120 : 1200,
+        right: 320,
+        bottom: index === 3 ? 300 : 1380,
+        left: 0,
+        toJSON: () => ({})
+      }));
+    });
+    window.dispatchEvent(new Event('scroll'));
+
+    await waitFor(() => expect(translationBodies).toHaveLength(6));
+    expect(translationBodies.flatMap((body) => body.texts)).toEqual(expect.arrayContaining(['中文标题 7', '中文摘要 12', '新闻预览 12']));
+  });
+
+  it('uses title_language to skip cards already in the target language', async () => {
+    const translationBodies: Array<{ texts: string[] }> = [];
+    stubDefaultFetch((url, init) => {
+      if (url.includes('/api/translate')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { texts: string[] };
+        translationBodies.push({ texts: body.texts });
+      }
+      return undefined;
+    });
+
+    render(<App />);
+    expect(await screen.findByText('OpenAI 发布新的多模态模型能力')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /切换语言/i }));
+    await userEvent.click(screen.getByRole('button', { name: /中文/i }));
+
+    await waitFor(() => expect(screen.getByText('OpenAI 发布新的多模态模型能力')).toBeInTheDocument());
+    expect(translationBodies).toHaveLength(0);
+  });
+
+  it('uses title_language to translate English cards into Chinese', async () => {
+    const englishItem = {
+      ...makeNewsItem(1, '2026-06-30T10:00:00.000Z'),
+      title: 'AI agents are not your coworkers',
+      title_language: 'en',
+      summary: 'A story about new AI agent products.',
+      sources: [
+        {
+          source_name: 'Test Source',
+          title: 'AI agents are not your coworkers',
+          summary: 'A story about new AI agent products.',
+          content: 'Short English preview',
+          url: 'https://example.com/en',
+          published_at: '2026-06-30T10:00:00.000Z'
+        }
+      ]
+    };
+    const translationBodies: Array<{ texts: string[] }> = [];
+    stubDefaultFetch((url, init) => {
+      if (url.includes('/api/news')) {
+        return okJson({ items: [englishItem], page: 1, page_size: 40, total: 1 });
+      }
+      if (url.includes('/api/translate')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { texts: string[]; target_language: string };
+        translationBodies.push({ texts: body.texts });
+        return okJson({
+          target_language: body.target_language,
+          items: body.texts.map((text) => ({
+            original_text: text,
+            translated_text: `${text} 中文`,
+            source_language: 'en',
+            target_language: 'zh'
+          }))
+        });
+      }
+      return undefined;
+    });
+
+    render(<App />);
+    expect(await screen.findByText('AI agents are not your coworkers')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /切换语言/i }));
+    await userEvent.click(screen.getByRole('button', { name: /中文/i }));
+
+    await waitFor(() => expect(translationBodies).toHaveLength(1));
+    expect(translationBodies[0].texts).toEqual(
+      expect.arrayContaining(['AI agents are not your coworkers', 'A story about new AI agent products.', 'Short English preview'])
+    );
   });
 
   it('shows and dismisses the quota exhausted dialog when translation quota is depleted', async () => {

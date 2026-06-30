@@ -44,7 +44,25 @@ const DEFAULT_PUBLIC_CONFIG: PublicConfig = {
   site_copyright_owner: null,
   site_copyright_text: null
 };
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const SHANGHAI_TIME_ZONE = 'Asia/Shanghai';
+const SHANGHAI_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: SHANGHAI_TIME_ZONE,
+  month: '2-digit',
+  day: '2-digit',
+  weekday: 'short'
+});
+const SHANGHAI_DATE_KEY_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: SHANGHAI_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+const SHANGHAI_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: SHANGHAI_TIME_ZONE,
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false
+});
 
 type LoadState = 'idle' | 'loading' | 'error';
 type PrimaryView = 'latest' | 'hot' | 'followed' | 'saved';
@@ -52,6 +70,9 @@ type UtilityView = 'sources' | 'settings';
 type ActiveView = PrimaryView | UtilityView;
 type TopbarPanel = 'filters' | 'notifications' | null;
 const OVERLAY_ANIMATION_MS = 180;
+const TRANSLATION_CARDS_PER_BATCH = 6;
+const TRANSLATION_CARDS_PER_REQUEST = 2;
+const TRANSLATION_PREFETCH_REMAINING_CARDS = 2;
 
 interface GroupedNews {
   label: string;
@@ -71,18 +92,18 @@ interface SourceStat {
   latestAt: string;
 }
 
+function datePartMap(formatter: Intl.DateTimeFormat, date: Date): Record<string, string> {
+  return Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+}
+
 function formatDateLabel(value: string): string {
   const date = new Date(value);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${month} - ${day}, ${WEEKDAYS[date.getDay()]}`;
+  const parts = datePartMap(SHANGHAI_DATE_FORMATTER, date);
+  return `${parts.month} - ${parts.day}, ${parts.weekday}`;
 }
 
 function formatTime(value: string): string {
-  return new Date(value).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit'
-  });
+  return SHANGHAI_TIME_FORMATTER.format(new Date(value));
 }
 
 function formatSourceDomain(url: string): string {
@@ -189,31 +210,80 @@ function getStoredString<T extends string>(key: string, fallback: T, allowed: re
   }
 }
 
-function collectTranslatableTexts(items: NewsCluster[]): string[] {
+function isProbablyChinese(text: string): boolean {
+  return /[\u4e00-\u9fff]/.test(text);
+}
+
+function shouldTranslateText(text: string, targetLanguage: Exclude<LanguageMode, 'auto'>): boolean {
+  const hasChinese = isProbablyChinese(text);
+  return targetLanguage === 'en' ? hasChinese : !hasChinese;
+}
+
+function shouldTranslateCard(item: NewsCluster, targetLanguage: Exclude<LanguageMode, 'auto'>): boolean | null {
+  if (item.title_language === 'en') return targetLanguage === 'zh';
+  if (item.title_language === 'zh') return targetLanguage === 'en';
+  return null;
+}
+
+function collectCardTranslationTexts(items: NewsCluster[], targetLanguage: Exclude<LanguageMode, 'auto'>): string[] {
   const texts: string[] = [];
   for (const item of items) {
-    texts.push(item.title, item.summary);
-    for (const source of item.sources) {
-      texts.push(source.title);
+    const cardTexts = [item.title, item.summary, getShortestPreview(item).text];
+    const cardDecision = shouldTranslateCard(item, targetLanguage);
+    if (cardDecision === false) continue;
+    if (cardDecision === true) {
+      texts.push(...cardTexts.filter((text) => text.trim()));
+      continue;
     }
+    texts.push(...cardTexts.filter((text) => text.trim() && shouldTranslateText(text, targetLanguage)));
   }
-  return listUnique(texts.filter((text) => text.trim()));
+  return listUnique(texts);
 }
 
 function listUnique(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
+function chunkList<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
 function applyTranslations(item: NewsCluster, translations: Record<string, string>): NewsCluster {
+  const translateValue = (value: string): string => translations[value] || translations[cleanPreviewText(value)] || value;
   return {
     ...item,
-    title: translations[item.title] || item.title,
-    summary: translations[item.summary] || item.summary,
+    title: translateValue(item.title),
+    summary: translateValue(item.summary),
     sources: item.sources.map((source) => ({
       ...source,
-      title: translations[source.title] || source.title
+      title: translateValue(source.title),
+      summary: translateValue(source.summary),
+      content: translateValue(source.content)
     }))
   };
+}
+
+function dateKey(value: string): string {
+  const date = new Date(value);
+  const parts = datePartMap(SHANGHAI_DATE_KEY_FORMATTER, date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function getInitialTranslationCards(items: NewsCluster[]): NewsCluster[] {
+  const latest = items[0];
+  if (!latest) return [];
+  const latestKey = dateKey(latest.published_at);
+  return items.filter((item) => dateKey(item.published_at) === latestKey).slice(0, TRANSLATION_CARDS_PER_BATCH);
+}
+
+function nextCursorAfterBatch(items: NewsCluster[], batch: NewsCluster[]): number {
+  if (batch.length === 0) return 0;
+  const indexes = batch.map((item) => items.findIndex((candidate) => candidate.id === item.id)).filter((index) => index >= 0);
+  return indexes.length ? Math.max(...indexes) + 1 : 0;
 }
 
 function languageLabel(language: LanguageMode): string {
@@ -333,6 +403,7 @@ function NewsCard({
   return (
     <article
       className="news-card"
+      data-news-card-id={item.id}
       role="button"
       tabIndex={0}
       onClick={() => onOpen(item)}
@@ -516,11 +587,16 @@ export function App() {
   const [translationMap, setTranslationMap] = useState<Record<string, string>>({});
   const [translating, setTranslating] = useState(false);
   const [translationError, setTranslationError] = useState('');
+  const [translatedCardIds, setTranslatedCardIds] = useState<string[]>([]);
   const [showQuotaDialog, setShowQuotaDialog] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const didRunInitialSearch = useRef(false);
   const newsModalCloseTimer = useRef<number | null>(null);
   const mobileMenuCloseTimer = useRef<number | null>(null);
+  const translationRunId = useRef(0);
+  const translationCursor = useRef(0);
+  const translationRunInFlight = useRef<number | null>(null);
+  const hasUserScrolledForTranslation = useRef(false);
   const showSpecialLink = query.includes(SPECIAL_TRIGGER);
 
   useEffect(() => {
@@ -669,47 +745,41 @@ export function App() {
   }, [activeSource, activeTopic, activeView, followedTopics, items, savedIds]);
 
   useEffect(() => {
-    let active = true;
+    translationRunId.current += 1;
+    translationRunInFlight.current = null;
+    translationCursor.current = 0;
+    hasUserScrolledForTranslation.current = false;
+    setTranslatedCardIds([]);
+
     if (languageMode === 'auto') {
       setTranslationMap({});
       setTranslating(false);
       setTranslationError('');
       return;
     }
-    const texts = collectTranslatableTexts(visibleItems);
-    if (texts.length === 0) {
-      setTranslationMap({});
+
+    setTranslationMap({});
+    setTranslationError('');
+    const initialBatch = getInitialTranslationCards(visibleItems);
+    translationCursor.current = nextCursorAfterBatch(visibleItems, initialBatch);
+    if (initialBatch.length === 0) {
       setTranslating(false);
-      setTranslationError('');
       return;
     }
-    setTranslating(true);
-    setTranslationError('');
-    translateTexts(texts, languageMode)
-      .then((response) => {
-        if (!active) return;
-        const nextMap = Object.fromEntries(response.items.map((item) => [item.original_text, item.translated_text]));
-        setTranslationMap(nextMap);
-        setShowQuotaDialog(false);
-      })
-      .catch((err: Error) => {
-        if (!active) return;
-        if (err instanceof TranslationQuotaExceededError) {
-          setLanguageMode('auto');
-          setShowQuotaDialog(true);
-          setTranslationError('');
-          setTranslationMap({});
-          return;
-        }
-        setTranslationError(err.message || '翻译失败');
-        setTranslationMap({});
-      })
-      .finally(() => {
-        if (active) setTranslating(false);
-      });
-    return () => {
-      active = false;
-    };
+
+    void translateCardBatch(initialBatch, languageMode, translationRunId.current);
+  }, [languageMode, visibleItems]);
+
+  useEffect(() => {
+    if (languageMode === 'auto') return;
+
+    function handleScroll() {
+      hasUserScrolledForTranslation.current = true;
+      maybeTranslateNextVisibleBatch();
+    }
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
   }, [languageMode, visibleItems]);
 
   const displayItems = useMemo(() => {
@@ -742,6 +812,72 @@ export function App() {
     setActiveView('latest');
     setActiveSource(null);
     setActiveTopic((current) => (current === topic ? null : topic));
+  }
+
+  async function translateCardBatch(cards: NewsCluster[], targetLanguage: Exclude<LanguageMode, 'auto'>, runId: number) {
+    if (cards.length === 0 || translationRunInFlight.current !== null) return;
+    translationRunInFlight.current = runId;
+    setTranslating(true);
+    setTranslationError('');
+
+    try {
+      for (const cardGroup of chunkList(cards, TRANSLATION_CARDS_PER_REQUEST)) {
+        const texts = collectCardTranslationTexts(cardGroup, targetLanguage);
+        if (texts.length > 0) {
+          const response = await translateTexts(texts, targetLanguage);
+          if (translationRunId.current !== runId) return;
+          const nextMap = Object.fromEntries(response.items.map((item) => [item.original_text, item.translated_text]));
+          setTranslationMap((current) => ({ ...current, ...nextMap }));
+        }
+        if (translationRunId.current !== runId) return;
+        setTranslatedCardIds((current) => listUnique([...current, ...cardGroup.map((item) => item.id)]));
+      }
+      if (translationRunId.current === runId) setShowQuotaDialog(false);
+    } catch (err) {
+      if (translationRunId.current !== runId) return;
+      if (err instanceof TranslationQuotaExceededError) {
+        setLanguageMode('auto');
+        setShowQuotaDialog(true);
+        setTranslationError('');
+        setTranslationMap({});
+        setTranslatedCardIds([]);
+        return;
+      }
+      setTranslationError(err instanceof Error ? err.message : '翻译失败');
+    } finally {
+      if (translationRunInFlight.current === runId) {
+        translationRunInFlight.current = null;
+        setTranslating(false);
+      }
+    }
+  }
+
+  function lastVisibleCardIndex(): number {
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    let lastIndex = -1;
+    for (const element of Array.from(document.querySelectorAll<HTMLElement>('[data-news-card-id]'))) {
+      const id = element.dataset.newsCardId;
+      if (!id) continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.bottom <= 0 || rect.top >= viewportHeight) continue;
+      const index = visibleItems.findIndex((item) => item.id === id);
+      if (index > lastIndex) lastIndex = index;
+    }
+    return lastIndex;
+  }
+
+  function maybeTranslateNextVisibleBatch() {
+    if (!hasUserScrolledForTranslation.current || languageMode === 'auto' || translationRunInFlight.current !== null) return;
+    if (translationCursor.current >= visibleItems.length) return;
+
+    const lastVisible = lastVisibleCardIndex();
+    if (lastVisible < 0) return;
+    const remainingTranslatedCards = translationCursor.current - lastVisible - 1;
+    if (remainingTranslatedCards > TRANSLATION_PREFETCH_REMAINING_CARDS) return;
+
+    const nextBatch = visibleItems.slice(translationCursor.current, translationCursor.current + TRANSLATION_CARDS_PER_BATCH);
+    translationCursor.current += nextBatch.length;
+    void translateCardBatch(nextBatch, languageMode as Exclude<LanguageMode, 'auto'>, translationRunId.current);
   }
 
   function openNewsModal(item: NewsCluster) {
@@ -986,7 +1122,7 @@ export function App() {
                   </div>
                   <div>
                     <strong>当前语言：{languageLabel(languageMode)}</strong>
-                    <span>{languageMode === 'auto' ? '展示源语言' : translating ? '正在翻译当前列表' : translationError || '翻译缓存可用'}</span>
+                    <span>{languageMode === 'auto' ? '展示源语言' : translating ? `正在翻译卡片，已完成 ${translatedCardIds.length} 张` : translationError || '翻译缓存可用'}</span>
                   </div>
                   <div>
                     <strong>当前列表 {visibleItems.length} 条</strong>
@@ -1041,7 +1177,7 @@ export function App() {
           {status === 'loading' && <div className="state-row">正在加载新闻...</div>}
           {status === 'error' && <div className="state-row error">{error}</div>}
           {refreshNotice && status !== 'error' && <div className="state-row compact-state">{refreshNotice}</div>}
-          {translating && <div className="state-row compact-state">正在翻译为 {languageLabel(languageMode)}...</div>}
+          {translating && <div className="state-row compact-state">正在翻译为 {languageLabel(languageMode)}，已完成 {translatedCardIds.length} 张卡片...</div>}
           {translationError && <div className="state-row error compact-state">翻译失败，当前显示源语言：{translationError}</div>}
           {status !== 'loading' && activeView !== 'settings' && grouped.length === 0 && <div className="state-row">没有匹配的新闻事件。</div>}
 

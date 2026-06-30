@@ -36,6 +36,7 @@ class Database:
                     published_at TEXT NOT NULL,
                     keywords_json TEXT NOT NULL,
                     primary_url TEXT NOT NULL,
+                    title_language TEXT,
                     updated_at TEXT NOT NULL
                 );
 
@@ -94,6 +95,7 @@ class Database:
                 """
             )
             self._ensure_column(connection, "articles", "content", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "clusters", "title_language", "TEXT")
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,7 @@ from .config import Settings
 from .database import Database, from_json, to_json
 from .dedupe import is_same_topic
 from .keywords import extract_keywords, has_special_trigger, is_ai_related, keyword_score
+from .language import detect_title_language
 from .schemas import NewsCluster, NewsListResponse, NewsSourceItem, RefreshResponse, RefreshStatusResponse, SearchResponse
 from .sources.base import ArticleCandidate
 from .sources.free_apis import CurrentsApiAdapter, GuardianAdapter, HackerNewsAlgoliaAdapter, NewsApiAdapter, TheNewsApiAdapter
@@ -20,21 +22,27 @@ from .sources.gnews import GNewsAdapter
 from .sources.rss import RssAdapter
 from .text import clean_text
 
+TITLE_LANGUAGE_MARK_DELAY_SECONDS = 300
+logger = logging.getLogger(__name__)
+
 
 class NewsService:
     def __init__(self, database: Database, settings: Settings):
         self.database = database
         self.settings = settings
         self._refresh_lock = asyncio.Lock()
+        self._language_mark_tasks: set[asyncio.Task[None]] = set()
 
     def init(self) -> None:
         self.database.init()
+        self.normalize_future_published_times()
 
     async def refresh(self) -> RefreshResponse:
         async with self._refresh_lock:
             started_at = datetime.now(timezone.utc).isoformat()
             candidates = await self._fetch_candidates()
             inserted, clustered = self._store_candidates(candidates)
+            self.normalize_future_published_times()
             self._prune_irrelevant_clusters()
             self.prune_old_news()
             finished_at = datetime.now(timezone.utc).isoformat()
@@ -46,7 +54,80 @@ class NewsService:
                     """,
                     (started_at, finished_at, len(candidates), inserted, clustered),
                 )
+            self.schedule_title_language_marking()
             return RefreshResponse(fetched=len(candidates), inserted=inserted, clustered=clustered)
+
+    def schedule_title_language_marking(self, delay_seconds: int = TITLE_LANGUAGE_MARK_DELAY_SECONDS) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        task = loop.create_task(self._mark_missing_title_languages_later(delay_seconds))
+        self._language_mark_tasks.add(task)
+        task.add_done_callback(self._language_mark_tasks.discard)
+
+    async def _mark_missing_title_languages_later(self, delay_seconds: int) -> None:
+        try:
+            await asyncio.sleep(delay_seconds)
+            self.mark_missing_title_languages()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Title language marking failed")
+
+    def cancel_language_mark_tasks(self) -> None:
+        for task in list(self._language_mark_tasks):
+            task.cancel()
+        self._language_mark_tasks.clear()
+
+    def mark_missing_title_languages(self) -> int:
+        updated = 0
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT id, title FROM clusters WHERE title_language IS NULL").fetchall()
+            for row in rows:
+                connection.execute(
+                    "UPDATE clusters SET title_language = ?, updated_at = ? WHERE id = ? AND title_language IS NULL",
+                    (detect_title_language(row["title"]), datetime.now(timezone.utc).isoformat(), row["id"]),
+                )
+                updated += 1
+        return updated
+
+    def normalize_future_published_times(self) -> int:
+        now = datetime.now(timezone.utc)
+        updated = 0
+        with self.database.connect() as connection:
+            cluster_rows = connection.execute("SELECT id, published_at FROM clusters").fetchall()
+            for row in cluster_rows:
+                normalized = self._normalize_published_at(row["published_at"], now)
+                if normalized == row["published_at"]:
+                    continue
+                connection.execute(
+                    "UPDATE clusters SET published_at = ?, updated_at = ? WHERE id = ?",
+                    (normalized, now.isoformat(), row["id"]),
+                )
+                updated += 1
+
+            article_rows = connection.execute("SELECT id, published_at FROM articles").fetchall()
+            for row in article_rows:
+                normalized = self._normalize_published_at(row["published_at"], now)
+                if normalized == row["published_at"]:
+                    continue
+                connection.execute("UPDATE articles SET published_at = ? WHERE id = ?", (normalized, row["id"]))
+                updated += 1
+        return updated
+
+    @staticmethod
+    def _normalize_published_at(value: str, now: datetime | None = None) -> str:
+        current = now or datetime.now(timezone.utc)
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return current.isoformat()
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.astimezone(timezone.utc)
+        return current.isoformat() if parsed > current else parsed.isoformat()
 
     async def _fetch_candidates(self) -> list[ArticleCandidate]:
         tasks = [RssAdapter(self.settings.rss_sources).fetch()]
@@ -136,7 +217,7 @@ class NewsService:
                     title=title,
                     summary=summary,
                     url=candidate.url,
-                    published_at=candidate.published_at,
+                    published_at=self._normalize_published_at(candidate.published_at),
                     content=clean_text(candidate.content),
                 )
                 cluster_id = self._find_cluster(connection, cleaned_candidate, keywords)
@@ -152,7 +233,7 @@ class NewsService:
                             cluster_id,
                             cleaned_candidate.title,
                             cleaned_candidate.summary,
-                            candidate.published_at,
+                            cleaned_candidate.published_at,
                             to_json(keywords),
                             candidate.url,
                             fetched_at,
@@ -174,7 +255,7 @@ class NewsService:
                         cleaned_candidate.summary,
                         cleaned_candidate.content,
                         candidate.url,
-                        candidate.published_at,
+                        cleaned_candidate.published_at,
                         fetched_at,
                         to_json(keywords),
                     ),
@@ -403,6 +484,7 @@ class NewsService:
         return NewsCluster(
             id=row["id"],
             title=clean_text(row["title"]),
+            title_language=row["title_language"],
             summary=clean_text(row["summary"]),
             published_at=row["published_at"],
             keywords=from_json(row["keywords_json"]),

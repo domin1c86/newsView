@@ -16,6 +16,16 @@ export class ManualRefreshLimitError extends Error {
   }
 }
 
+export class ApiRequestError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, init);
   if (!response.ok) {
@@ -44,7 +54,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ) {
       throw new ManualRefreshLimitError();
     }
-    throw new Error(`请求失败：${response.status}`);
+    const detailMessage =
+      typeof detail === 'object' &&
+      detail !== null &&
+      'message' in detail &&
+      typeof (detail as { message?: unknown }).message === 'string'
+        ? (detail as { message: string }).message
+        : '';
+    throw new ApiRequestError(response.status, detailMessage || `请求失败：${response.status}`);
   }
   return response.json() as Promise<T>;
 }

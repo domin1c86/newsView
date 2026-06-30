@@ -10,6 +10,7 @@ export interface NewsSourceItem {
 export interface NewsCluster {
   id: string;
   title: string;
+  title_language: 'zh' | 'en' | 'unknown' | null;
   summary: string;
   published_at: string;
   keywords: string[];
