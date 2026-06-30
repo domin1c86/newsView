@@ -1,6 +1,8 @@
 export interface NewsSourceItem {
   source_name: string;
   title: string;
+  summary: string;
+  content: string;
   url: string;
   published_at: string;
 }

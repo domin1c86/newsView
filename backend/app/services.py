@@ -6,6 +6,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
+
+from .article_text import fetch_article_content, should_fetch_article_content
 from .config import Settings
 from .database import Database, from_json, to_json
 from .dedupe import is_same_topic
@@ -79,7 +82,35 @@ class NewsService:
             if isinstance(result, Exception):
                 continue
             candidates.extend(result)
-        return candidates
+        return await self._enrich_article_content(candidates)
+
+    async def _enrich_article_content(self, candidates: list[ArticleCandidate]) -> list[ArticleCandidate]:
+        targets = [candidate for candidate in candidates if should_fetch_article_content(candidate.summary)]
+        if not targets:
+            return candidates
+
+        semaphore = asyncio.Semaphore(8)
+
+        async def fetch_one(client: httpx.AsyncClient, candidate: ArticleCandidate) -> tuple[str, str]:
+            async with semaphore:
+                try:
+                    return candidate.url, await fetch_article_content(client, candidate.url)
+                except httpx.HTTPError:
+                    return candidate.url, ""
+
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            fetched = dict(await asyncio.gather(*(fetch_one(client, candidate) for candidate in targets)))
+        return [
+            ArticleCandidate(
+                source_name=candidate.source_name,
+                title=candidate.title,
+                summary=candidate.summary,
+                url=candidate.url,
+                published_at=candidate.published_at,
+                content=fetched.get(candidate.url, candidate.content),
+            )
+            for candidate in candidates
+        ]
 
     def _store_candidates(self, candidates: list[ArticleCandidate]) -> tuple[int, int]:
         inserted = 0
@@ -94,7 +125,11 @@ class NewsService:
                 if not is_ai_related(f"{title} {summary} {candidate.url}"):
                     continue
                 keywords = extract_keywords(f"{title} {summary}")
-                if connection.execute("SELECT id FROM articles WHERE url = ?", (candidate.url,)).fetchone():
+                existing_article = connection.execute("SELECT id, content FROM articles WHERE url = ?", (candidate.url,)).fetchone()
+                if existing_article:
+                    content = clean_text(candidate.content)
+                    if content and not clean_text(existing_article["content"]):
+                        connection.execute("UPDATE articles SET content = ? WHERE id = ?", (content, existing_article["id"]))
                     continue
                 cleaned_candidate = ArticleCandidate(
                     source_name=candidate.source_name,
@@ -102,6 +137,7 @@ class NewsService:
                     summary=summary,
                     url=candidate.url,
                     published_at=candidate.published_at,
+                    content=clean_text(candidate.content),
                 )
                 cluster_id = self._find_cluster(connection, cleaned_candidate, keywords)
                 if cluster_id is None:
@@ -127,8 +163,8 @@ class NewsService:
 
                 connection.execute(
                     """
-                    INSERT INTO articles (id, cluster_id, source_name, title, summary, url, published_at, fetched_at, keywords_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO articles (id, cluster_id, source_name, title, summary, content, url, published_at, fetched_at, keywords_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         str(uuid.uuid4()),
@@ -136,6 +172,7 @@ class NewsService:
                         candidate.source_name,
                         cleaned_candidate.title,
                         cleaned_candidate.summary,
+                        cleaned_candidate.content,
                         candidate.url,
                         candidate.published_at,
                         fetched_at,
@@ -345,7 +382,7 @@ class NewsService:
     def _cluster_from_row(self, connection: sqlite3.Connection, row: sqlite3.Row) -> NewsCluster:
         source_rows = connection.execute(
             """
-            SELECT source_name, title, url, published_at
+            SELECT source_name, title, summary, content, url, published_at
             FROM articles
             WHERE cluster_id = ?
             ORDER BY published_at DESC
@@ -356,6 +393,8 @@ class NewsService:
             NewsSourceItem(
                 source_name=source["source_name"],
                 title=clean_text(source["title"]),
+                summary=clean_text(source["summary"]),
+                content=clean_text(source["content"]),
                 url=source["url"],
                 published_at=source["published_at"],
             )

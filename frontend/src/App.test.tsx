@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 
@@ -17,12 +17,16 @@ const newsPayload = {
         {
           source_name: 'Sample API',
           title: 'OpenAI 发布新的多模态模型能力',
+          summary: '这是一段较长的来源正文预览，会介绍模型更新的背景、能力变化和更多细节。',
+          content: '这是一段较长的来源正文预览，会介绍模型更新的背景、能力变化和更多细节。',
           url: 'https://example.com/primary',
           published_at: '2026-06-26T10:00:00.000Z'
         },
         {
           source_name: 'RSS',
           title: 'OpenAI adds multimodal model features',
+          summary: '<img src="https://example.com/a.jpg" />短正文预览。',
+          content: '<img src="https://example.com/a.jpg" />短正文预览。',
           url: 'https://example.com/rss',
           published_at: '2026-06-26T09:00:00.000Z'
         }
@@ -70,6 +74,22 @@ function stubDefaultFetch(overrides?: (url: string, init?: RequestInit) => unkno
   );
 }
 
+function mockMatchMedia(matches: boolean) {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn().mockImplementation((query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }))
+  );
+}
+
 describe('App', () => {
   afterEach(() => {
     cleanup();
@@ -89,8 +109,14 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: /打开新闻：OpenAI 发布新的多模态模型能力/i }));
     expect(screen.getByRole('dialog', { name: /OpenAI 发布新的多模态模型能力/i })).toBeInTheDocument();
     expect(screen.getByText('OpenAI adds multimodal model features')).toBeInTheDocument();
+    expect(screen.getByText('新闻预览')).toBeInTheDocument();
+    expect(screen.getByText(/来自 RSS/)).toBeInTheDocument();
+    expect(screen.getByText('短正文预览。')).toBeInTheDocument();
+    expect(screen.queryByText(/img src/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /展开/i }));
+    expect(screen.getByRole('button', { name: /收起/i })).toHaveAttribute('aria-expanded', 'true');
     await userEvent.click(screen.getByRole('button', { name: /关闭弹窗/i }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
   it('shows the special link when search includes 老岳中转', async () => {
@@ -114,6 +140,23 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '稍后读' }));
     expect(screen.getByText('当前显示 1 条新闻事件。')).toBeInTheDocument();
     expect(screen.getByText('OpenAI 发布新的多模态模型能力')).toBeInTheDocument();
+  });
+
+  it('opens the sidebar navigation as a mobile filter drawer', async () => {
+    mockMatchMedia(true);
+    stubDefaultFetch();
+
+    render(<App />);
+    expect(await screen.findByText('OpenAI 发布新的多模态模型能力')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '筛选' }));
+
+    const drawer = screen.getByRole('dialog', { name: '导航筛选' });
+    expect(drawer).toBeInTheDocument();
+    expect(document.querySelector('.app-shell')).toHaveClass('mobile-menu-open');
+
+    await userEvent.click(within(drawer).getByRole('button', { name: '大模型' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '导航筛选' })).not.toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: '大模型' })).toBeInTheDocument();
   });
 
   it('prunes saved news ids that are no longer in the one-week news cache', async () => {

@@ -10,3 +10,4 @@ class ArticleCandidate:
     summary: str
     url: str
     published_at: str
+    content: str = ""

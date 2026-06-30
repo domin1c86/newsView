@@ -6,6 +6,8 @@ from pydantic import BaseModel
 class NewsSourceItem(BaseModel):
     source_name: str
     title: str
+    summary: str
+    content: str
     url: str
     published_at: str
 

@@ -60,6 +60,8 @@ def test_news_and_search_endpoints(monkeypatch):
         news_payload = news_response.json()
         assert news_payload["items"]
         assert news_payload["items"][0]["source_count"] >= 1
+        assert news_payload["items"][0]["sources"][0]["summary"]
+        assert "content" in news_payload["items"][0]["sources"][0]
         assert all("八天前" not in item["title"] for item in news_payload["items"])
 
         search_response = client.get("/api/search", params={"q": "OpenAI 多模态"})

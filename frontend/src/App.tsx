@@ -6,6 +6,8 @@ import {
   Box,
   Brain,
   Check,
+  ChevronDown,
+  ChevronUp,
   Cpu,
   Database,
   ExternalLink,
@@ -49,6 +51,7 @@ type PrimaryView = 'latest' | 'hot' | 'followed' | 'saved';
 type UtilityView = 'sources' | 'settings';
 type ActiveView = PrimaryView | UtilityView;
 type TopbarPanel = 'filters' | 'notifications' | null;
+const OVERLAY_ANIMATION_MS = 180;
 
 interface GroupedNews {
   label: string;
@@ -106,6 +109,33 @@ function hasSearchKeywords(data: NewsListResponse | SearchResponse): data is Sea
 function displayKeywords(keywords: string[], limit = 6): string[] {
   const blocked = new Set(['porn']);
   return keywords.filter((keyword) => !blocked.has(keyword.toLowerCase())).slice(0, limit);
+}
+
+function cleanPreviewText(value: string): string {
+  return (value || '')
+    .replace(/<img\b[^>]*>/gi, ' ')
+    .replace(/<picture\b[\s\S]*?<\/picture>/gi, ' ')
+    .replace(/<figure\b[\s\S]*?<\/figure>/gi, ' ')
+    .replace(/!\[[^\]]*]\([^)]+\)/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getShortestPreview(item: NewsCluster): { sourceName: string; text: string } {
+  const candidates = item.sources
+    .map((source) => ({
+      sourceName: source.source_name,
+      text: cleanPreviewText(source.content || source.summary || source.title)
+    }))
+    .filter((source) => source.text.length > 0)
+    .sort((left, right) => left.text.length - right.text.length);
+
+  if (candidates[0]) return candidates[0];
+  return {
+    sourceName: item.sources[0]?.source_name || 'AI快讯',
+    text: cleanPreviewText(item.summary) || '暂无可预览内容，请打开原文查看完整报道。'
+  };
 }
 
 const primaryNav = [
@@ -219,15 +249,19 @@ function Sidebar({
   activeView,
   activeTopic,
   onSelectView,
-  onSelectTopic
+  onSelectTopic,
+  className = 'sidebar',
+  ariaLabel = '应用导航'
 }: {
   activeView: ActiveView;
   activeTopic: string | null;
   onSelectView: (view: ActiveView) => void;
   onSelectTopic: (topic: string) => void;
+  className?: string;
+  ariaLabel?: string;
 }) {
   return (
-    <aside className="sidebar" aria-label="应用导航">
+    <aside className={className} aria-label={ariaLabel}>
       <div className="brand-mark" aria-label="AI 快讯">
         <span>AI</span>
         <strong>快讯</strong>
@@ -338,14 +372,19 @@ function NewsCard({
 function NewsModal({
   item,
   saved,
+  closing = false,
   onClose,
   onToggleSaved
 }: {
   item: NewsCluster;
   saved: boolean;
+  closing?: boolean;
   onClose: () => void;
   onToggleSaved: (id: string) => void;
 }) {
+  const [previewExpanded, setPreviewExpanded] = useState(false);
+  const preview = useMemo(() => getShortestPreview(item), [item]);
+
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -357,7 +396,7 @@ function NewsModal({
   }, [onClose]);
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    <div className={`modal-backdrop${closing ? ' closing' : ''}`} role="presentation" onClick={onClose}>
       <section className="news-modal" role="dialog" aria-modal="true" aria-labelledby="news-modal-title" onClick={(event) => event.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="关闭弹窗">
           <X size={24} aria-hidden="true" />
@@ -395,6 +434,28 @@ function NewsModal({
               </li>
             ))}
           </ul>
+        </div>
+
+        <div className="modal-section preview-section">
+          <div className="preview-heading">
+            <div>
+              <h3>新闻预览</h3>
+              <span>来自 {preview.sourceName}，已去除图片内容</span>
+            </div>
+            <button
+              type="button"
+              className="preview-toggle"
+              onClick={() => setPreviewExpanded((current) => !current)}
+              aria-expanded={previewExpanded}
+              aria-controls="news-preview-content"
+            >
+              {previewExpanded ? '收起' : '展开'}
+              {previewExpanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
+            </button>
+          </div>
+          <p id="news-preview-content" className={`preview-copy${previewExpanded ? ' expanded' : ''}`}>
+            {preview.text}
+          </p>
         </div>
 
         <div className="modal-section">
@@ -440,6 +501,7 @@ export function App() {
   const [publicConfig, setPublicConfig] = useState<PublicConfig>(DEFAULT_PUBLIC_CONFIG);
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus | null>(null);
   const [selectedItem, setSelectedItem] = useState<NewsCluster | null>(null);
+  const [newsModalClosing, setNewsModalClosing] = useState(false);
   const [activeView, setActiveView] = useState<ActiveView>('latest');
   const [activeTopic, setActiveTopic] = useState<string | null>(null);
   const [activeSource, setActiveSource] = useState<string | null>(null);
@@ -447,6 +509,9 @@ export function App() {
   const [followedTopics, setFollowedTopics] = useState<string[]>(() => getStoredList('ai-news-followed-topics', ['大模型', '应用']));
   const [languageMode, setLanguageMode] = useState<LanguageMode>(() => getStoredString<LanguageMode>('ai-news-language', 'auto', ['auto', 'zh', 'en']));
   const [topbarPanel, setTopbarPanel] = useState<TopbarPanel>(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileMenuClosing, setMobileMenuClosing] = useState(false);
   const [showLanguageDialog, setShowLanguageDialog] = useState(false);
   const [translationMap, setTranslationMap] = useState<Record<string, string>>({});
   const [translating, setTranslating] = useState(false);
@@ -454,7 +519,37 @@ export function App() {
   const [showQuotaDialog, setShowQuotaDialog] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const didRunInitialSearch = useRef(false);
+  const newsModalCloseTimer = useRef<number | null>(null);
+  const mobileMenuCloseTimer = useRef<number | null>(null);
   const showSpecialLink = query.includes(SPECIAL_TRIGGER);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const queryList = window.matchMedia('(max-width: 980px)');
+    const syncLayout = () => {
+      setIsMobileLayout(queryList.matches);
+      if (!queryList.matches) {
+        setMobileMenuOpen(false);
+        setMobileMenuClosing(false);
+      } else {
+        setTopbarPanel(null);
+      }
+    };
+    syncLayout();
+    queryList.addEventListener('change', syncLayout);
+    return () => queryList.removeEventListener('change', syncLayout);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        closeMobileMenu();
+      }
+    }
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [mobileMenuOpen, mobileMenuClosing]);
 
   useEffect(() => {
     let active = true;
@@ -541,6 +636,13 @@ export function App() {
     const timer = window.setTimeout(() => setShowQuotaDialog(false), 3000);
     return () => window.clearTimeout(timer);
   }, [showQuotaDialog]);
+
+  useEffect(() => {
+    return () => {
+      if (newsModalCloseTimer.current) window.clearTimeout(newsModalCloseTimer.current);
+      if (mobileMenuCloseTimer.current) window.clearTimeout(mobileMenuCloseTimer.current);
+    };
+  }, []);
 
   const sourceStats = useMemo(() => collectSourceStats(items), [items]);
 
@@ -642,6 +744,57 @@ export function App() {
     setActiveTopic((current) => (current === topic ? null : topic));
   }
 
+  function openNewsModal(item: NewsCluster) {
+    if (newsModalCloseTimer.current) window.clearTimeout(newsModalCloseTimer.current);
+    setNewsModalClosing(false);
+    setSelectedItem(item);
+  }
+
+  function closeNewsModal() {
+    if (!selectedItem || newsModalClosing) return;
+    setNewsModalClosing(true);
+    newsModalCloseTimer.current = window.setTimeout(() => {
+      setSelectedItem(null);
+      setNewsModalClosing(false);
+      newsModalCloseTimer.current = null;
+    }, OVERLAY_ANIMATION_MS);
+  }
+
+  function openMobileMenu() {
+    if (mobileMenuCloseTimer.current) window.clearTimeout(mobileMenuCloseTimer.current);
+    setMobileMenuClosing(false);
+    setMobileMenuOpen(true);
+  }
+
+  function closeMobileMenu() {
+    if (!mobileMenuOpen || mobileMenuClosing) return;
+    setMobileMenuClosing(true);
+    mobileMenuCloseTimer.current = window.setTimeout(() => {
+      setMobileMenuOpen(false);
+      setMobileMenuClosing(false);
+      mobileMenuCloseTimer.current = null;
+    }, OVERLAY_ANIMATION_MS);
+  }
+
+  function handleFilterButtonClick() {
+    if (isMobileLayout) {
+      setTopbarPanel(null);
+      openMobileMenu();
+      return;
+    }
+    setTopbarPanel((current) => (current === 'filters' ? null : 'filters'));
+  }
+
+  function handleMobileSelectView(view: ActiveView) {
+    handleSelectView(view);
+    closeMobileMenu();
+  }
+
+  function handleMobileSelectTopic(topic: string) {
+    handleSelectTopic(topic);
+    closeMobileMenu();
+  }
+
   function toggleSaved(id: string) {
     setSavedIds((current) => (current.includes(id) ? current.filter((savedId) => savedId !== id) : [...current, id]));
   }
@@ -688,7 +841,7 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${mobileMenuOpen ? ' mobile-menu-open' : ''}`}>
       <Sidebar activeView={activeView} activeTopic={activeTopic} onSelectView={handleSelectView} onSelectTopic={handleSelectTopic} />
 
       <main className="workspace">
@@ -723,8 +876,10 @@ export function App() {
             <div className="toolbar-actions">
               <button
                 type="button"
-                className={`tool-button${topbarPanel === 'filters' ? ' active' : ''}`}
-                onClick={() => setTopbarPanel((current) => (current === 'filters' ? null : 'filters'))}
+                className={`tool-button${topbarPanel === 'filters' || mobileMenuOpen ? ' active' : ''}`}
+                onClick={handleFilterButtonClick}
+                aria-expanded={isMobileLayout ? mobileMenuOpen : topbarPanel === 'filters'}
+                aria-controls={isMobileLayout ? 'mobile-menu' : undefined}
               >
                 <SlidersHorizontal size={18} aria-hidden="true" />
                 <span className="tool-label">筛选</span>
@@ -948,7 +1103,7 @@ export function App() {
                 </div>
                 <div className="card-grid">
                   {group.items.map((item) => (
-                    <NewsCard item={item} key={item.id} saved={savedIds.includes(item.id)} onOpen={setSelectedItem} onToggleSaved={toggleSaved} />
+                    <NewsCard item={item} key={item.id} saved={savedIds.includes(item.id)} onOpen={openNewsModal} onToggleSaved={toggleSaved} />
                   ))}
                 </div>
               </div>
@@ -957,7 +1112,7 @@ export function App() {
           )}
         </section>
         {selectedItem && (
-          <NewsModal item={selectedItem} saved={savedIds.includes(selectedItem.id)} onClose={() => setSelectedItem(null)} onToggleSaved={toggleSaved} />
+          <NewsModal item={selectedItem} saved={savedIds.includes(selectedItem.id)} closing={newsModalClosing} onClose={closeNewsModal} onToggleSaved={toggleSaved} />
         )}
         {showLanguageDialog && (
           <div className="modal-backdrop" role="presentation" onClick={() => setShowLanguageDialog(false)}>
@@ -1008,6 +1163,26 @@ export function App() {
           </footer>
         )}
       </main>
+      {mobileMenuOpen && (
+        <div className={`mobile-menu-layer${mobileMenuClosing ? ' closing' : ''}`} role="presentation" onClick={closeMobileMenu}>
+          <div className="mobile-menu-frame" role="dialog" aria-modal="true" aria-labelledby="mobile-menu-title" onClick={(event) => event.stopPropagation()}>
+            <div className="mobile-menu-heading">
+              <strong id="mobile-menu-title">导航筛选</strong>
+              <button type="button" className="mini-button" onClick={closeMobileMenu} aria-label="关闭导航筛选">
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+            <Sidebar
+              activeView={activeView}
+              activeTopic={activeTopic}
+              onSelectView={handleMobileSelectView}
+              onSelectTopic={handleMobileSelectTopic}
+              className="mobile-menu-panel"
+              ariaLabel="移动端导航筛选"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

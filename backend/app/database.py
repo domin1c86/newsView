@@ -45,6 +45,7 @@ class Database:
                     source_name TEXT NOT NULL,
                     title TEXT NOT NULL,
                     summary TEXT NOT NULL,
+                    content TEXT NOT NULL DEFAULT '',
                     url TEXT NOT NULL UNIQUE,
                     published_at TEXT NOT NULL,
                     fetched_at TEXT NOT NULL,
@@ -92,6 +93,13 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_translation_cache_languages ON translation_cache(source_language, target_language);
                 """
             )
+            self._ensure_column(connection, "articles", "content", "TEXT NOT NULL DEFAULT ''")
+
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def to_json(value: Any) -> str:
